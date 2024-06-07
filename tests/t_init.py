@@ -1,3 +1,4 @@
+import pprint
 from argparse import ArgumentParser
 from argparse_subargs import *
 
@@ -38,6 +39,13 @@ parser.add_argument("--xlate", required=False,
                     help="Translate in_file to out_file (default: to stdout)",
                     subarg_parser=subarg_parser)
 
+if len(sys.argv) > 1:    # command line parameters
+    print("parsing cli parameters", sys.argv[1:])
+    args=parser.parse_args(sys.argv[1:])
+    print(getattr(args, "translate"))
+    pprint.pp(args)
+    sys.exit(0)
+
 print("""
 ################################################
 ### print usage and help messages
@@ -45,7 +53,6 @@ print("""
 """)
 parser.print_help()
 parser.print_usage()    
-
 
 print("""
 ################################################
