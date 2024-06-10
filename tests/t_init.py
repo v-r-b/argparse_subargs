@@ -27,9 +27,10 @@ parser.add_argument("--translate", required=True,
 
 # create another almost identical subarg list without mandatory positional args.
 # For all subargs, help texts are provided. Additional subargs are allowed.
+# This time, use a user defined metavar value for lterm= argument.
 subarg_parser = SubargParser(pos_args=[PSubarg("in_file", "path to input file"), 
                                        PSubarg("out_file", "path to output file")], 
-                             kw_args=[KWSubarg("lterm", help="line termination characters", mand=False)], 
+                             kw_args=[KWSubarg("lterm", help="line termination characters", mand=False, metavar="TERM_CHARS")], 
                              num_mandatory_pos_args=0,
                              allow_excess_args=True)
 # create argument non-mandatory argument "--xlate" with the above subarg list.
