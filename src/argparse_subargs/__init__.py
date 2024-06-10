@@ -423,6 +423,10 @@ class SubargAction(_AppendAction):
         else:
             _error(parser, "No valid SubargParser object found")
 
+    def get_subarg_parser(self) -> SubargParser:
+        """ Return SubargParser instance used by this SubargAction instance """
+        return self._subarg_parser
+
 class SubargHelpFormatter(HelpFormatter):
     """ Formatter for help when using action=SubargAction in add_parameter()
     of ArgumentParser. 
