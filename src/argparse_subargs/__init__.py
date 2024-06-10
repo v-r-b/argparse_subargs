@@ -64,10 +64,12 @@ class KWSubarg:
         name (str): parameter name
         mand (bool, optional): Mandatory argument or not? Defaults to True.
         help (str, optional): help text for parameter. Defaults to None.
+        metavar (str, optional): displayed name behind the "="
     """
     name: str
     mand: bool = True
     help: str|None = None
+    metavar: str|None = None
 
     def __eq__(self, other) -> bool:
         """ call _compare_subargs(self, other) and return result """
@@ -171,6 +173,8 @@ class SubargParser:
         # parser and arg_name may be set by AppendOptAction object
         self._parser = parser
         self._arg_name = arg_name
+        self._arg_namespace = Namespace()
+        self._arg_list: list[str] = []
 
     def get_metavar_str(self) -> str:
         """ Get a string for use with metavar= parameter of ArgumentParser's add_arguments() method.
@@ -203,12 +207,14 @@ class SubargParser:
         # then, kw_args:
         l = len(self._kw_args)
         for i, kwarg in enumerate(self._kw_args):
+            # use arg's user defined metavar value if it exists, else uppercase argname
+            arg_meta = kwarg.metavar if kwarg.metavar else kwarg.name.upper()
             if kwarg.mand:
                 # mandatory
-                metavar += kwarg.name + "=" + kwarg.name.upper()
+                metavar += kwarg.name + "=" + arg_meta
             else:
                 # optional
-                metavar += "[" + kwarg.name + "=" + kwarg.name.upper() + "]"
+                metavar += "[" + kwarg.name + "=" + arg_meta + "]"
             if i < l-1:
                 metavar += " "
         
@@ -239,6 +245,24 @@ class SubargParser:
         """
         _error(self._parser, message)
 
+    def get_arg_ns(self) -> Namespace:
+        """ Return the result of the last call to parse_subargs()
+
+        Returns:
+            Namespace: result of the last call to parse_subargs. May be empty.
+        """
+        return self._arg_namespace
+
+    def get_arg_list(self) -> list[str]:
+        """ Return the contents of the Sequence "args" passed to parse_subargs(args)
+        at the last call. The contents are returned as a list preserving the order
+        of arguments in the Sequence "args".
+
+        Returns:
+            list[str]: argument list passed to the last call of parse_subargs.
+        """
+        return self._arg_list
+
     def parse_subargs(self, args: Sequence[str]) -> Namespace:
         """ Parse command line subargs against the lists passed to the constructor,
         regarding the values of allow_excess_arguments and num_mandatory_pos_arguments.
@@ -246,6 +270,12 @@ class SubargParser:
          - values of excess positional arguments are reported in EXC_POS_SUBARGS_FIELD
          - names of excess keyword arguments are reported in EXC_KW_SUBARG_NAMES_FIELD
         Otherwise an error is reported using the _error() method.
+
+        parse_subargs stores the contents of "args" in _arg_list. This list can later
+        be retrieved by calling get_arg_list().
+
+        If parsing is successful, parse_subargs stores the resulting namespace in _arg_namespace.
+        This field can be accessed by calling get_arg_ns().
 
         Args:
             args (Sequence[str]): subargs from the command line
@@ -256,6 +286,10 @@ class SubargParser:
         Returns:
             Namespace: all positional and keyword arguments found.
         """
+        # store string arguments at the beginning.
+        self._arg_list = [x for x in args]
+
+        # do the parsing
         ns = Namespace()
         pos_counter = 0
         excess_kw_arg_names: list[str] = []
@@ -286,6 +320,9 @@ class SubargParser:
                 self._error(f"too many keyword sub-args: {excess_kw_arg_names}")
 
         self._check_mandatory_args(ns)
+
+        # store result in case we get here (successful parsing)
+        self._arg_namespace = ns
         return ns
     
     def _check_mandatory_args(self, ns: Namespace) -> bool:
