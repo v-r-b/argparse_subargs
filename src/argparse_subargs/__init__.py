@@ -557,14 +557,15 @@ class SubargHelpFormatterMixin(HelpFormatter):
             # AND we have NOT the user's class derived from the Mixin
             #     and from a HelpFormatter class (the one that has been instantiated)
             # AND we have NOT object (top of the inheritance graph),
-            # THEN we must have the HelpFormatter class that shall be used
+            # THEN the first class found must be the HelpFormatter subclass class that shall be used
             # with any other than SubargAction actions (shoulb be the second entry in the inheritance list).
+            #
+            # Since SubargHelpFormatterMixin itself inherits from HelpFormatter, the mixin would
+            # also work with single inheritance, because HelpFormatter is in the MRO
             if cls != SubargHelpFormatterMixin and cls != type(self) and cls != object:
-                if isinstance(cls, HelpFormatter):
+                if issubclass(cls, HelpFormatter):
                     self._cls_formatter = cls
-                    print("We are using a", cls.__name__)
-                else:
-                    raise TypeError("%s is not inheriting from argparse.HelpFormatter, but uses %s", type(self), cls)
+                    break
         # create flag for use in _split_lines
         self._has_SubargAction = False
         # call next constructor in inheritance list
