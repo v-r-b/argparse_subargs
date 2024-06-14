@@ -22,8 +22,19 @@ add_parameter() method of ArgumentParser.
 ```class SubargHelpFormatter```
   
 Formatter for help when using action=SubargAction in add_parameter()
-of ArgumentParser.
+of ArgumentParser. Uses SubargHelpFormatterMixin and HelpFormatter
+to do the actual work.
 
+```class SubargHelpFormatterMixin```
+  
+Mixin for creating formatter classes for use with ArgumentParser
+when SubargHelpFormatter is not suitable. This could, e.g., be
+```
+class MyDefaultsFormatter(
+         SubargHelpFormatterMixin, 
+         argparse.ArgumentDefaultsHelpFormatter)
+    pass
+```
 ```class PSubarg```
   
 Positional subarg description with \_\_eq__ operator.

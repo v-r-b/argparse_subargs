@@ -23,8 +23,19 @@ add_parameter() method of ArgumentParser.
 ```class SubargHelpFormatter```
   
 Formatter for help when using action=SubargAction in add_parameter()
-of ArgumentParser.
+of ArgumentParser. Uses SubargHelpFormatterMixin and HelpFormatter
+to do the actual work.
 
+```class SubargHelpFormatterMixin```
+  
+Mixin for creating formatter classes for use with ArgumentParser
+when SubargHelpFormatter is not suitable. This could, e.g., be
+```
+class MyDefaultsFormatter(
+         SubargHelpFormatterMixin, 
+         argparse.ArgumentDefaultsHelpFormatter)
+    pass
+```
 ```class PSubarg```
   
 Positional subarg description with \_\_eq__ operator.
@@ -39,7 +50,7 @@ from dataclasses import dataclass, fields as dc_fields
 from argparse import Action, _AppendAction, ArgumentError, ArgumentParser
 from argparse import HelpFormatter, Namespace, ZERO_OR_MORE
 from argparse import _copy_items # type: ignore
-from typing import Any, Sequence
+from typing import Any, Sequence, TypeVar
 
 @dataclass
 class PSubarg:
@@ -104,10 +115,21 @@ class SubargParser:
     can be positional arguments or keyword-arguments, e.g.:
       myprog.py --print Welcome Message name=Michael role=brother
 
-    Using a SubargParser(["W1", "W2"], ["name", "role"]) instance and calling
-    parse_subargs() on the arguments to --print, a list of namespace
-    objects is returned. In this example we would get [Namespace(W1='Welcome',
-    W2='Message', name="Michael", role="Brother")]
+    SubargParser stores the positional and keyword arguments in a Namespace
+    object. Besides these, the complete original argument list passed to
+    the parse_subargs() method of the parser, is stored inside the namespace
+    unter the identifier stored in ARG_LIST_FIELD. 
+    
+    Under certain circumstances, there can be two more additional fields, 
+    named after EXC_POS_SUBARGS_FIELD and EXC_KW_SUBARG_NAMES_FIELD. For Details
+    see parse_subargs()
+
+    Using a SubargParser(pos_args=["W1", "W2"], lw_args=["name", "role"]) 
+    instance and calling parse_subargs() on the arguments to --print (see above), 
+    a list of namespace objects is returned. Since --print is only called once
+    in this example, we would get a list with one element:
+    [Namespace(W1='Welcome', W2='Message', name="Michael", role="Brother", 
+    _arg_list=["Welcome", "Message", "name=Michael", "role=brother"])]
 
     SubargParser objects are to be passed to a SubargAction instance using
     action=SubargAction and subarg_parser=<SubargParser instance> when calling
@@ -117,8 +139,9 @@ class SubargParser:
         TypeError, ArgumentError: see method descriptions
     """
 
-    EXC_POS_SUBARGS_FIELD = "excess_pos_subargs"
-    EXC_KW_SUBARG_NAMES_FIELD = "excess_kw_subarg_names"
+    ARG_LIST_FIELD = "_arg_list"
+    EXC_POS_SUBARGS_FIELD = "_excess_pos_subargs"
+    EXC_KW_SUBARG_NAMES_FIELD = "_excess_kw_subarg_names"
 
     def __init__(self, *, pos_args: Sequence[str|PSubarg] = [], kw_args: Sequence[str|KWSubarg] = [], 
                  num_mandatory_pos_args: int = -1, allow_excess_args: bool = True,
@@ -126,8 +149,12 @@ class SubargParser:
         """ Constructor. Stores parameter values. The entries of the sequences are copied into
         internal lists. Entries can either be strings or P/KWSubargs instances (mixing is allowed).
         For P/KWSubargs, a help text can be passed in, for KWSubargs there's an additional field
-        that denotes whether the argument is mandatory or not. Positional arguments are
-        mandatory by default. Optional positional arguments are possible by using num_mandatory_pos_args.
+        that denotes whether the argument is mandatory or not, plus a field for a metavar text
+        (default is <name>.upper()). 
+        
+        Positional arguments are mandatory by default. 
+        
+        Optional positional arguments are possible by using num_mandatory_pos_args.
 
         Args:
             pos_args (Sequence[str | PSubarg], optional): Positional sub-arguments. Defaults to [].
@@ -163,7 +190,7 @@ class SubargParser:
             if isinstance(kwarg, KWSubarg):
                 self._kw_args.append(kwarg)
             elif isinstance(kwarg, str):
-                self._kw_args.append(KWSubarg(kwarg))
+                self._kw_args.append(KWSubarg(kwarg, metavar=kwarg.upper()))
             else:
                 raise TypeError(f"argument must be of type str|KWSubarg "
                                 f"but is of type {type(kwarg)}")
@@ -173,10 +200,8 @@ class SubargParser:
         # parser and arg_name may be set by AppendOptAction object
         self._parser = parser
         self._arg_name = arg_name
-        self._arg_namespace = Namespace()
-        self._arg_list: list[str] = []
 
-    def get_metavar_str(self) -> str:
+    def format_metavar_str(self) -> str:
         """ Get a string for use with metavar= parameter of ArgumentParser's add_arguments() method.
         The string is constructed from the information passed to the constructor (subarg lists
         and allow_excess_args)
@@ -222,6 +247,80 @@ class SubargParser:
             metavar += " [...]"
         return metavar
     
+    def format_args_help(self, *, indent: int = 2, line_width: int = 70) -> str:
+        """ Return a formatted (multiline) string with help for all the
+         parser's  _pos_args and _kw_args. Entries for the arguments are
+         added only, if <arg>.help is not None. keyword arguments are
+         displayed as <name>=<metavar>. If <arg>.metavar is None, uppercase
+         name is used as metavar.
+
+        Args:
+            indent (int, optional): indentation at the beginning of an entry. Defaults to 2.
+            line_width (int, optional): display width of the help text. Defaults to 70
+
+        Returns:
+            str: formatted help string, NOT prepended by a "usage" line
+        """
+        # find width of name column
+        name_len = 0
+        for parg in self._pos_args:
+            if parg.help:
+                name_len = max(name_len, len(parg.name))
+        for kwarg in self._kw_args:
+            if kwarg.help:
+                kw_parm = kwarg.metavar if kwarg.metavar else kwarg.name.upper()
+                kw_parm = f"{kwarg.name}={kw_parm}"
+                name_len = max(name_len, len(kw_parm))
+        # early return if no help was found
+        if not name_len:
+            return ""
+
+        # width is not bigger than 30
+        name_len = min(name_len, 30)
+
+        import textwrap
+
+        # construct text
+        result: list[str] = []
+        for parg in self._pos_args:
+            if parg.help:
+                help = f"{parg.name.ljust(name_len)}  {parg.help}"
+                result.extend(textwrap.wrap(help, line_width, initial_indent= "".ljust(indent),
+                                            subsequent_indent=" ".ljust(name_len+2+indent)))
+        for kwarg in self._kw_args:
+            if kwarg.help:
+                kw_parm = kwarg.metavar if kwarg.metavar else kwarg.name.upper()
+                kw_parm = f"{kwarg.name}={kw_parm}"
+                help = f"{kw_parm.ljust(name_len)}  {kwarg.help}"
+                result.extend(textwrap.wrap(help, line_width, initial_indent= "".ljust(indent),
+                                            subsequent_indent=" ".ljust(name_len+2+indent)))
+        if result:
+            help = result[0]
+            for s in result[1:]:
+                help += "\n" + s
+            return help
+        return ""
+
+    def get_pos_args(self) -> list[PSubarg]:
+        """ Return list of positional arguments. Other than the list passed to
+        the constructor, where list elements can be either of type str or PSubarg,
+        the list returned consists entirely of PSubargs.
+
+        Returns:
+            list[PSubarg]: list of positional arguments
+        """
+        return self._pos_args
+    
+    def get_kw_args(self) -> list[KWSubarg]:
+        """ Return list of keyword arguments. Other than the list passed to
+        the constructor, where list elements can be either of type str or KWSubarg,
+        the list returned consists entirely of KWSubargs.
+
+        Returns:
+            list[KWSubarg]: list of keyword arguments
+        """
+        return self._kw_args
+    
     def _arg_message(self, message: str) -> str:
         """ If self._arg_name is not None, prepend message with "[<arg_name>]" and return it.
         Otherwise return unchanged message string. 
@@ -244,24 +343,6 @@ class SubargParser:
             message (str): error message
         """
         _error(self._parser, message)
-
-    def get_arg_ns(self) -> Namespace:
-        """ Return the result of the last call to parse_subargs()
-
-        Returns:
-            Namespace: result of the last call to parse_subargs. May be empty.
-        """
-        return self._arg_namespace
-
-    def get_arg_list(self) -> list[str]:
-        """ Return the contents of the Sequence "args" passed to parse_subargs(args)
-        at the last call. The contents are returned as a list preserving the order
-        of arguments in the Sequence "args".
-
-        Returns:
-            list[str]: argument list passed to the last call of parse_subargs.
-        """
-        return self._arg_list
 
     def parse_subargs(self, args: Sequence[str]) -> Namespace:
         """ Parse command line subargs against the lists passed to the constructor,
@@ -286,10 +367,6 @@ class SubargParser:
         Returns:
             Namespace: all positional and keyword arguments found.
         """
-        # store string arguments at the beginning.
-        self._arg_list = [x for x in args]
-
-        # do the parsing
         ns = Namespace()
         pos_counter = 0
         excess_kw_arg_names: list[str] = []
@@ -310,6 +387,10 @@ class SubargParser:
                     pos_counter += 1
                 else:   # too many positional arguments
                     excess_pos_args.append(arg)
+
+        # store copy of original argument list in namespace
+        setattr(ns, SubargParser.ARG_LIST_FIELD, [x for x in args])
+        
         if excess_pos_args:
             setattr(ns, SubargParser.EXC_POS_SUBARGS_FIELD, excess_pos_args)
             if not self._allow_excess_args:
@@ -399,11 +480,30 @@ class SubargAction(_AppendAction):
             self._subarg_parser = subarg_parser
             # store argument name in subarg_parser
             self._subarg_parser._arg_name = dest
+            if not self.help:
+                self.help = " "
+            # TODO: set help text to "Plugin subargs:" if help is None AND parser has help texts in P(KWSubarg List)
         else:
             raise TypeError(f"{self.__class__.__name__}.__init__(): 'subarg_parser' must not be None")
 
     def __call__(self, parser: ArgumentParser, namespace: Namespace, 
                  values: str|Sequence[Any]|None, option_string: str|None=None) -> None:
+        """ Perform SubargAction. The method will be call by an ArgumentParser instance.
+        The values passed in will be transformed into a Namespace object, which is
+        appended to the list stored in <namespace>'s attribute <self.dest>. In other words:
+        SubargAction works similar to AppendAction, but does not store a list[list[str]],
+        but a list[Namespace].
+
+        Args:
+            parser (ArgumentParser): parser instance calling this method
+            namespace (Namespace): namespace to which the result will be added
+            values (str | Sequence[Any] | None): command line arguments to parse
+            option_string (str | None, optional): _description_. option string with
+                which the action was invoked (None for positional arguments).
+
+        Raises:
+            TypeError: if the values could not be parsed by self._subarg_parser
+        """
         if self._subarg_parser:
             self._subarg_parser._parser = parser
             try:
@@ -424,18 +524,60 @@ class SubargAction(_AppendAction):
             _error(parser, "No valid SubargParser object found")
 
     def get_subarg_parser(self) -> SubargParser:
-        """ Return SubargParser instance used by this SubargAction instance """
+        """ 
+        Returns: 
+            SubargParser instance used by this SubargAction instance """
         return self._subarg_parser
 
-class SubargHelpFormatter(HelpFormatter):
-    """ Formatter for help when using action=SubargAction in add_parameter()
-    of ArgumentParser. 
+class SubargHelpFormatterMixin(HelpFormatter):
+    """ ATTENTION: Do not instantiate this class, but do only derive from it!
+    You can use SubargHelpFormatter or create an own subclass (see below)
+    
+    Mixin that implements the necessary changes to the formatting
+    methods of HelpFormatter for formatting SubargActions when used in 
+    add_parameter() of ArgumentParser. 
+
+    The mixin can be used to construct arbitrary HelpFormatter classes
+    that can handle SubargActions beside their own functionality. To create
+    a subclass, build an empty class like:
+
+    class MyFormatter(SubargHelpFormatterMixin, argparse.XXXHelpFormatter)
+        pass
+        
+    where XXXHelpFormatter can be e.g. ArgumentDefaultsHelpFormatter.
+    It is important that the HelpFormatter subclass is the second entry
+    in the inheritance list!
     """
+    def __init__(self, *args, **kwargs):
+        """ Constructor """
+        # first determine the second class from which the user has derived
+        # their own formatter class (besides mixin, see class comment above)
+        for cls in self.__class__.mro():
+            # IF we have NOT the Mixin class (this one here)
+            # AND we have NOT the user's class derived from the Mixin
+            #     and from a HelpFormatter class (the one that has been instantiated)
+            # AND we have NOT object (top of the inheritance graph),
+            # THEN we must have the HelpFormatter class that shall be used
+            # with any other than SubargAction actions (shoulb be the second entry in the inheritance list).
+            if cls != SubargHelpFormatterMixin and cls != type(self) and cls != object:
+                if isinstance(cls, HelpFormatter):
+                    self._cls_formatter = cls
+                    print("We are using a", cls.__name__)
+                else:
+                    raise TypeError("%s is not inheriting from argparse.HelpFormatter, but uses %s", type(self), cls)
+        # create flag for use in _split_lines
+        self._has_SubargAction = False
+        # call next constructor in inheritance list
+        super().__init__(*args, **kwargs)
+
     def _format_args(self, action: Action, default_metavar: str) -> str:
         """ Format argument string in help message. If action is of type SubargAction,
         the string "{{ <metavar> }}" is returned. If <metavar> is not set by the
         user (as metavar=... in add_parameter()), call get_metavar_str() on the
         action's member _subarg_parser to get the right text.
+
+        If action is not of type SubargAction, call the _format_args method of
+        the second class in the inheritance list to do the formatting.
 
         Args:
             all: see Action._format_args
@@ -443,20 +585,23 @@ class SubargHelpFormatter(HelpFormatter):
         Returns:
             str: formatted argument string
         """
+        # set flag for use in _split_lines
+        self._has_SubargAction = isinstance(action, SubargAction)
         get_metavar = self._metavar_formatter(action, default_metavar)
         if isinstance(action, SubargAction):
             metavar = get_metavar(1)
             # if metavar hasn't been set by the user, call subarg_parser:
             if metavar == (None,) or metavar == (action.dest.upper(),):
-                metavar=(action._subarg_parser.get_metavar_str(),)
+                metavar=(action._subarg_parser.format_metavar_str(),)
             return '{{ %s }}' % metavar
         else:
-            return super()._format_args(action, default_metavar)
+            return self._cls_formatter._format_args(self, action, default_metavar)
 
     def _get_help_string(self, action: Action) -> str|None:
         """ If action is of type SubargAction, construct help string from 
         action's help text plus help texts of the subargs. Else, return
-        action's help text only using _get_help_string() of the superclass.
+        action's help text calling the _get_help_string() method of the second
+        class in the inheritance list to do the formatting.
 
         Args:
             action (Action): parameter related Action instance
@@ -464,8 +609,10 @@ class SubargHelpFormatter(HelpFormatter):
         Returns:
             str: help text containing newline characters
         """
-        # use implemtation of superclass to get help text for action
-        help = super()._get_help_string(action)
+        # set flag for use in _split_lines
+        self._has_SubargAction = isinstance(action, SubargAction)
+        # use implemtation of formatter class to get help text for action
+        help = self._cls_formatter._get_help_string(self, action)
         # in case we have a SubargAction, use subarg_parser information
         if isinstance(action, SubargAction):
             if help is None:
@@ -473,15 +620,13 @@ class SubargHelpFormatter(HelpFormatter):
             subarg_parser = action._subarg_parser
             if subarg_parser:
                 if subarg_parser._pos_args:
-                    help += "\n-- positional subargs --"
                     for parg in subarg_parser._pos_args:
                         if parg.help:
-                            help += f"\n  {parg.name}: {parg.help}"
+                            help += f"\n  <{parg.name}>: {parg.help}"
                 if subarg_parser._kw_args:
-                    help += "\n-- keyword subargs --"
                     for kwarg in subarg_parser._kw_args:
                         if kwarg.help:
-                            help += f"\n  {kwarg.name}: {kwarg.help}"
+                            help += f"\n  <{kwarg.name}>: {kwarg.help}"
         return help
     
     def _split_lines(self, text: str, width: int) -> list[str]:
@@ -496,6 +641,10 @@ class SubargHelpFormatter(HelpFormatter):
         Returns:
             list[str]: help text, linewise
         """
+        # If we are not formatting a SubargAction, use the formatter class and return
+        if not self._has_SubargAction:
+            return self._cls_formatter._split_lines(self, text, width)
+        
         # The textwrap module is used only for formatting help.
         # Delay its import for speeding up the common usage of argparse.
         import textwrap
@@ -507,6 +656,13 @@ class SubargHelpFormatter(HelpFormatter):
             text = self._whitespace_matcher.sub(' ', text).strip()
             result.extend(textwrap.wrap(text, width))
         return result
+
+class SubargHelpFormatter(SubargHelpFormatterMixin, HelpFormatter):
+    """ Formatter for help when using action=SubargAction in add_parameter()
+    of ArgumentParser.  Uses SubargHelpFormatterMixin and HelpFormatter
+    to do the actual work. No further implementation is necessary.
+    """
+    pass
 
 def _error(parser: ArgumentParser|None, message: str) -> None:
     """ Print error message.
