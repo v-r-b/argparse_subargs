@@ -50,7 +50,7 @@ from dataclasses import dataclass, fields as dc_fields
 from argparse import Action, _AppendAction, ArgumentError, ArgumentParser
 from argparse import HelpFormatter, Namespace, ZERO_OR_MORE
 from argparse import _copy_items # type: ignore
-from typing import Any, Sequence, TypeVar
+from typing import Any, Sequence
 
 @dataclass
 class PSubarg:
