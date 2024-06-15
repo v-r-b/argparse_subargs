@@ -15,7 +15,6 @@ description = "Parse parameter lists in argparse arguments, e.g. --arg sub1 sub2
 readme = "README.md"
 requires-python = ">=3.9"
 dependencies = [
-  "designpatterns_vrb"
 ]
 classifiers = [
   "Development Status :: 4 - Beta",
