@@ -83,9 +83,9 @@ print("""
 args = parser.parse_args(["--translate", "/path/to/linfile", "/path/to/outfile", "/additional/path"])
 subargs = getattr(args, "translate")
 print("subargs:", subargs)
-assert hasattr(subargs[0], "excess_pos_subargs") and \
-       "/additional/path" in getattr(subargs[0], "excess_pos_subargs"), \
-       "there should be excess_pos_args containing /additional/path"
+assert hasattr(subargs[0], SubargParser.EXC_POS_SUBARGS_FIELD) and \
+       "/additional/path" in getattr(subargs[0], SubargParser.EXC_POS_SUBARGS_FIELD), \
+       f"there should be {SubargParser.EXC_POS_SUBARGS_FIELD} containing /additional/path"
 
 print("""
 ################################################
@@ -103,14 +103,16 @@ print("subargs:", subargs)
 for i, ns in enumerate(subargs):
     assert hasattr(ns, "in_file"), "in_file should have been found here"
     assert hasattr(ns, "out_file"), "out_file should have been found here"
-    assert hasattr(ns, "excess_pos_subargs"), "excess_pos_subargs should have been found here"
-    assert hasattr(ns, "excess_kw_subarg_names"), "excess_kw_subarg_names should have been found here"
+    assert hasattr(ns, SubargParser.EXC_POS_SUBARGS_FIELD), \
+        f"{SubargParser.EXC_POS_SUBARGS_FIELD} should have been found here"
+    assert hasattr(ns, SubargParser.EXC_KW_SUBARG_NAMES_FIELD), \
+        f"{SubargParser.EXC_KW_SUBARG_NAMES_FIELD} should have been found here"
     print(i, ":subargs to --translate:", ns)
     print("-> translate", getattr(ns, "in_file"), "to", getattr(ns, "out_file"))
     print("   additonal subargs:")
-    for sub in getattr(ns, "excess_pos_subargs"):
+    for sub in getattr(ns, SubargParser.EXC_POS_SUBARGS_FIELD):
         print("     ", sub)
-    for sub in getattr(ns, "excess_kw_subarg_names"):
+    for sub in getattr(ns, SubargParser.EXC_KW_SUBARG_NAMES_FIELD):
         print("     ", sub, "=", getattr(ns, sub))
 
 print("""
